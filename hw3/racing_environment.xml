@@ -1,0 +1,16 @@
+<mujoco>
+  <worldbody>
+    <geom type="box" size="0.1 0.1 0.5" pos="0.0 3.0 0" />
+    <geom type="box" size="0.1 0.1 0.5" pos="0.0 1.0 0" />
+    <geom type="box" size="0.1 0.1 0.5" pos="9.292893218813452 2.7071067811865475 0" />
+    <geom type="box" size="0.1 0.1 0.5" pos="10.707106781186548 1.2928932188134525 0" />
+    <geom type="box" size="0.1 0.1 0.5" pos="17.4 9.2 0" />
+    <geom type="box" size="0.1 0.1 0.5" pos="18.6 10.8 0" />
+    <geom type="box" size="0.1 0.1 0.5" pos="10.707106781186548 15.292893218813452 0" />
+    <geom type="box" size="0.1 0.1 0.5" pos="9.292893218813452 16.707106781186546 0" />
+    <geom type="box" size="0.1 0.1 0.5" pos="4.0 9.0 0" />
+    <geom type="box" size="0.1 0.1 0.5" pos="4.0 11.0 0" />
+    <geom type="box" size="0.1 0.1 0.5" pos="1.0 10.0 0" />
+    <geom type="box" size="0.1 0.1 0.5" pos="-1.0 10.0 0" />
+  </worldbody>
+</mujoco>
