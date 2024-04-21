@@ -76,8 +76,8 @@ def execute_scenario(scene, ASSETS=dict()):
             step_start = time.time()
 
             if not paused:
-                # velocity.ctrl = 1.0 # update velocity control value
-                # steering.ctrl = 4.0 # update steering control value
+                velocity.ctrl = 1.0 # update velocity control value
+                steering.ctrl = 4.0 # update steering control value
 
                 # mj_step can be replaced with code that also evaluates
                 # a policy and applies a control signal before stepping the physics.
