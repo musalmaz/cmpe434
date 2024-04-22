@@ -15,11 +15,11 @@ import numpy as np
 show_animation = True
 
 
-def dwa_control(x, config, goal, ob):
+def dwa_control(x, config, goal, ob, delta_time):
     """
     Dynamic Window Approach control
     """
-    dw = calc_dynamic_window(x, config)
+    dw = calc_dynamic_window(x, config, delta_time)
 
     u, trajectory = calc_control_and_trajectory(x, dw, config, goal, ob)
 
@@ -51,7 +51,7 @@ class Config:
         self.speed_cost_gain = 1.0
         self.obstacle_cost_gain = 1.0
         self.robot_stuck_flag_cons = 0.001  # constant to prevent robot stucked
-        self.robot_type = RobotType.circle
+        self.robot_type = RobotType.rectangle
 
         # if robot_type == RobotType.circle
         # Also used to check if goal is reached in both types
@@ -106,7 +106,7 @@ def motion(x, u, dt):
     return x
 
 
-def calc_dynamic_window(x, config):
+def calc_dynamic_window(x, config, delta_time):
     """
     calculation dynamic window based on current state x
     """
@@ -116,10 +116,10 @@ def calc_dynamic_window(x, config):
           -config.max_yaw_rate, config.max_yaw_rate]
 
     # Dynamic window from motion model
-    Vd = [x[3] - config.max_accel * config.dt,
-          x[3] + config.max_accel * config.dt,
-          x[4] - config.max_delta_yaw_rate * config.dt,
-          x[4] + config.max_delta_yaw_rate * config.dt]
+    Vd = [x[3] - config.max_accel * delta_time,
+          x[3] + config.max_accel * delta_time,
+          x[4] - config.max_delta_yaw_rate * delta_time,
+          x[4] + config.max_delta_yaw_rate * delta_time]
 
     #  [v_min, v_max, yaw_rate_min, yaw_rate_max]
     dw = [max(Vs[0], Vd[0]), min(Vs[1], Vd[1]),
