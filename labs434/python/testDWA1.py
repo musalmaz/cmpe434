@@ -104,16 +104,12 @@ obstacles = np.array([[1, 3],
 #     {"pos": [3, 3], "radius": 0.3, "height": 0.6}
 # ]
 obstacles_with_wall = np.concatenate((obstacles, wall))
-with mujoco.viewer.launch_passive(m, d, key_callback=key_callback) as viewer:
+with mujoco.viewer.launch_passive(m, d) as viewer:
+    velocity = d.actuator("throttle_velocity")
+    steering = d.actuator("steering")
 
-  # velocity = m.actuator("throttle_velocity")
-  # steering = m.actuator("steering")
-
-  velocity = d.actuator("throttle_velocity")
-  steering = d.actuator("steering")
-
-  # Set up wall
-  for i, point in enumerate(wall):
+    # Set up wall
+    for i, point in enumerate(wall):
         mujoco.mjv_initGeom(
             viewer.user_scn.geoms[i],
             type=mujoco.mjtGeom.mjGEOM_CYLINDER,
@@ -122,58 +118,54 @@ with mujoco.viewer.launch_passive(m, d, key_callback=key_callback) as viewer:
             mat=np.eye(3).flatten(),
             rgba=wall_rgba
         )
-        # viewer.user_scn.ngeom = i
-  # viewer.sync()
 
     # Set up obstacles
-  for j, obstacle in enumerate(obstacles):
+    for j, obstacle in enumerate(obstacles):
         mujoco.mjv_initGeom(
-            viewer.user_scn.geoms[len(wall) + j],  # Start indexing from the end of wall geoms
+            viewer.user_scn.geoms[len(wall) + j],
             type=mujoco.mjtGeom.mjGEOM_CYLINDER,
             size=[obstacle_radius, wall_height, 0],
             pos=[obstacle[0], obstacle[1], 0],
             mat=np.eye(3).flatten(),
             rgba=obstacle_rgba
         )
-        # viewer.user_scn.ngeom = j + len(wall)
-        # viewer.sync()
     # Update the total number of geometries
-  viewer.user_scn.ngeom = len(wall) + len(obstacles)
-  viewer.sync()
+    viewer.user_scn.ngeom = len(wall) + len(obstacles)
+    viewer.sync()
 
-  # Close the viewer automatically after 30 wall-seconds.
-  start = time.time()
-  while viewer.is_running() and time.time() - start < 100:
-    step_start = time.time()
+    # Close the viewer automatically after 30 wall-seconds.
+    start = time.time()
+    while viewer.is_running() and time.time() - start < 100:
+        step_start = time.time()
 
-    if not paused:
-        goal = np.array([3, 4])
-        delta_time = time.time() - step_start
-        current_position, car_orient, current_velocity = get_car_state(d, m)
-        current_speed = np.sqrt(current_velocity[0] ** 2 + current_velocity[1] ** 2)
+        if not paused:
+            goal = np.array([3, 4])
+            delta_time = time.time() - step_start
+            current_position, car_orient, current_velocity = get_car_state(d, m)
+            current_speed = np.sqrt(current_velocity[0] ** 2 + current_velocity[1] ** 2)
 
-        x = np.array([current_position[0], current_position[1], car_orient, current_speed, 0.0])
+            x = np.array([current_position[0], current_position[1], car_orient, current_speed, 0.0])
 
-        u, predicted_trajectory = dwa_control(x, config, goal, obstacles_with_wall, delta_time)
-        # main(obstacles_with_wall,3,4, RobotType.rectangle)
-        print("applied values : ", u[0], u[1])
+            u, predicted_trajectory = dwa_control(x, config, goal, obstacles_with_wall, delta_time)
+            # main(obstacles_with_wall,3,4, RobotType.rectangle)
+            print("applied values : ", u[0], u[1])
 
-        velocity.ctrl = u[0]*10 # update velocity control value
-        steering.ctrl = u[1]*10 # update steering control value
+            velocity.ctrl = u[0] # update velocity control value
+            steering.ctrl = u[1] # update steering control value
 
-        # mj_step can be replaced with code that also evaluates
-        # a policy and applies a control signal before stepping the physics.
-        mujoco.mj_step(m, d)
+            # mj_step can be replaced with code that also evaluates
+            # a policy and applies a control signal before stepping the physics.
+            mujoco.mj_step(m, d)
 
-        # Pick up changes to the physics state, apply perturbations, update options from GUI.
-        viewer.sync()
+            # Pick up changes to the physics state, apply perturbations, update options from GUI.
+            viewer.sync()
 
-        distance_to_goal = distance(current_position, goal)
-        if distance_to_goal < distance_threshold:
-            break
+            distance_to_goal = distance(current_position, goal)
+            if distance_to_goal < distance_threshold:
+                break
 
 
-    # Rudimentary time keeping, will drift relative to wall clock.
-    # time_until_next_step = m.opt.timestep - (time.time() - step_start)
-    # if time_until_next_step > 0:
-    #   time.sleep(time_until_next_step)
+        # Rudimentary time keeping, will drift relative to wall clock.
+        # time_until_next_step = m.opt.timestep - (time.time() - step_start)
+        # if time_until_next_step > 0:
+        #   time.sleep(time_until_next_step)

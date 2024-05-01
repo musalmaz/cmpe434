@@ -1,12 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
 # Parameters
 class DWAConfig:
     def __init__(self):
         # Robot (or car in this case) configuration
         self.max_speed = 3.0  # maximum speed [m/s]
-        self.min_speed = 0.0  # minimum speed [m/s]
+        self.min_speed = -1.0  # minimum speed [m/s]
         self.max_yawrate = 0.38  # maximum yaw rate [rad/s]
         self.min_yawrate = -0.38  # minimum yaw rate [rad/s]
         self.max_accel = 0.2  # maximum acceleration [m/ss]
@@ -16,9 +17,11 @@ class DWAConfig:
         self.dt = 0.1  # time tick [s]
         self.predict_time = 3.0  # predict time in the future [s]
         self.to_goal_cost_gain = 0.15  # cost-to-goal weighting
-        self.speed_cost_gain = 0.1  # speed cost weighting
+        self.speed_cost_gain = 1.0  # speed cost weighting
         self.obstacle_cost_gain = 1.0  # cost for obstacles
         self.robot_radius = 0.5  # robot radius [m]
+        self.obstacle_proximity_threshold = 0.5 
+        self.heading_cost_gain = 1.0
 
 # Motion Model
 def motion_model(x, u, dt):
@@ -69,28 +72,120 @@ def calc_control_and_trajectory(x, dw, config, goal, ob):
     return best_u, best_trajectory
 
 # Calculate cost for trajectory
-def calculate_cost(trajectory, config, goal, ob):
-    # Define costs here
-    # For example, penalize distance to goal and proximity to obstacles
+def calculate_cost(trajectory, config, goal, obstacles):
     cost = 0
     # Distance to goal cost
     dx = goal[0] - trajectory[-1, 0]
     dy = goal[1] - trajectory[-1, 1]
     goal_distance = np.sqrt(dx**2 + dy**2)
     cost += config.to_goal_cost_gain * goal_distance
-    # Add more costs based on your requirements
+
+    # Obstacle proximity cost
+    min_obstacle_distance = np.min([np.sqrt((obstacle[0] - trajectory[-1, 0])**2 + (obstacle[1] - trajectory[-1, 1])**2) for obstacle in obstacles])
+    if min_obstacle_distance < config.obstacle_proximity_threshold:
+        cost += config.obstacle_cost_gain / min_obstacle_distance
+    
+    # Heading error cost
+    current_heading = np.arctan2(dy, dx)
+    heading_difference = np.abs(current_heading - trajectory[-1, 2])  # Assuming the last column in trajectory is heading
+    heading_difference = np.minimum(heading_difference, 2 * np.pi - heading_difference)  # Smallest angle difference
+    cost += config.heading_cost_gain * heading_difference
+
+    # Speed cost
+    current_speed = trajectory[-1, 3]  # Assuming the fourth column in trajectory is speed
+    if hasattr(config, 'target_speed'):
+        speed_difference = np.abs(current_speed - config.target_speed)
+        cost += config.speed_cost_gain * speed_difference
+    else:
+        cost += config.speed_cost_gain * current_speed  # Cost increases with speed
+
     return cost
+
+
+def plot_robot_trajectory(trajectory, goal, obstacles, u):
+    # Setup the plot
+    fig, ax = plt.subplots()
+    # Plot trajectory using only the first two columns for x and y positions
+    ax.plot(trajectory[:, 0], trajectory[:, 1], label='Trajectory', color='blue')
+    # Plot starting position
+    ax.scatter(trajectory[0, 0], trajectory[0, 1], color='black', s=100, zorder=5, label='Start')
+    # Plot robot positions along the trajectory
+    for i in range(len(trajectory)):
+        circle = plt.Circle((trajectory[i, 0], trajectory[i, 1]), 0.2, color='gray', alpha=0.5, zorder=3)
+        ax.add_patch(circle)
+    # Plot obstacles
+    ax.scatter(obstacles[:, 0], obstacles[:, 1], color='red', s=50, zorder=4, label='Obstacles')
+    # Plot goal
+    ax.scatter(goal[0], goal[1], color='green', s=100, zorder=5, label='Goal')
+    # Annotations for control inputs (only if you want to annotate the same input throughout)
+    #for i in range(len(trajectory)):
+      #  ax.annotate(f"v={u[0]:.2f}, w={u[1]:.2f}", (trajectory[i, 0], trajectory[i, 1]), textcoords="offset points", xytext=(0,10), ha='center')
+    # Setting graph properties
+    ax.set_xlabel("X position (m)")
+    ax.set_ylabel("Y position (m)")
+    ax.legend()
+    ax.grid(True)
+    plt.axis('equal')
+    plt.show()
+
+
+
+# Example usage
+# config = DWAConfig()
+# x = np.array([0, 0, 0, 0])  # Initial state [x(m), y(m), theta(rad), v(m/s)]
+# goal = np.array([1, 10])  # Goal position [x(m), y(m)]
+# obstacles = np.array([[1, 2], [3, 4], [5, 6]])  # Obstacles positions [[x(m), y(m)], ...]
+
+# while 1:
+
+#     u, trajectory = dwa_control(x, config, goal, obstacles)
+#     x = motion_model(x, u, config.dt)
+#     print(trajectory)
+#     print(u)
+#     plot_robot_trajectory(trajectory, goal, obstacles, u)
+# print("Optimal velocity and yaw rate:", u)
+# plt.plot(trajectory[:, 0], trajectory[:, 1])
+# plt.scatter(obstacles[:,0], obstacles[:,1], color='red') # Obstacle positions
+# plt.scatter(goal[0], goal[1], color='green') # Goal position
+# plt.grid(True)
+# plt.show()
 
 # Example usage
 config = DWAConfig()
-x = np.array([0, 0, np.pi/4, 0])  # Initial state [x(m), y(m), theta(rad), v(m/s)]
+x = np.array([5, 2, 0, 0])  # Initial state [x(m), y(m), theta(rad), v(m/s)]
 goal = np.array([1, 10])  # Goal position [x(m), y(m)]
 obstacles = np.array([[1, 2], [3, 4], [5, 6]])  # Obstacles positions [[x(m), y(m)], ...]
+def update(frame):
+    global x  # Use the global state variable
+    u, trajectory = dwa_control(x, config, goal, obstacles)
+    print(u)
+    x = motion_model(x, u, config.dt)  # Update the robot's state
 
-u, trajectory = dwa_control(x, config, goal, obstacles)
-print("Optimal velocity and yaw rate:", u)
-plt.plot(trajectory[:, 0], trajectory[:, 1])
-plt.scatter(obstacles[:,0], obstacles[:,1], color='red') # Obstacle positions
-plt.scatter(goal[0], goal[1], color='green') # Goal position
-plt.grid(True)
+    # Clear the current plot
+    ax.clear()
+
+    # Plot trajectory using only the first two columns for x and y positions
+    ax.plot(trajectory[:, 0], trajectory[:, 1], 'b-', label='Trajectory')
+
+    # Plot obstacles
+    ax.scatter(obstacles[:, 0], obstacles[:, 1], color='red', s=50, label='Obstacles')
+
+    # Plot the goal
+    ax.scatter(goal[0], goal[1], color='green', s=100, label='Goal')
+
+    # Plot the robot's current position as a circle
+    robot_circle = plt.Circle((x[0], x[1]), 0.2, color='blue', fill=True)
+    ax.add_patch(robot_circle)
+
+    # Setting graph properties each time since the plot is cleared
+    ax.set_xlabel("X position (m)")
+    ax.set_ylabel("Y position (m)")
+    ax.legend()
+    ax.grid(True)
+    ax.axis('equal')
+    ax.set_xlim([np.min(obstacles[:,0]) - 1, np.max(obstacles[:,0]) + 1])
+    ax.set_ylim([np.min(obstacles[:,1]) - 1, np.max(obstacles[:,1]) + 1])
+
+fig, ax = plt.subplots()
+ani = FuncAnimation(fig, update, frames=np.arange(10000), repeat=False)
 plt.show()
