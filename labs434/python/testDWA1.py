@@ -4,7 +4,8 @@ import mujoco
 import mujoco.viewer
 
 import cmpe434_utils
-from dynamic_window_approach import *
+# from dynamic_window_approach import *
+from controller_DWA import *
 
 def get_angle(p1, p2):
     return (np.arctan2(p2[1] - p1[1], p2[0] - p1[0]) + 2*np.pi) % (2*np.pi)
@@ -104,6 +105,9 @@ obstacles = np.array([[1, 3],
 #     {"pos": [3, 3], "radius": 0.3, "height": 0.6}
 # ]
 obstacles_with_wall = np.concatenate((obstacles, wall))
+
+config_= DWAConfig()
+
 with mujoco.viewer.launch_passive(m, d) as viewer:
     velocity = d.actuator("throttle_velocity")
     steering = d.actuator("steering")
@@ -137,21 +141,27 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
     start = time.time()
     while viewer.is_running() and time.time() - start < 100:
         step_start = time.time()
+        print(1)
 
         if not paused:
+            # velocity.ctrl = 1 # update velocity control value
+            # steering.ctrl = 1 # update steering control value
             goal = np.array([3, 4])
             delta_time = time.time() - step_start
             current_position, car_orient, current_velocity = get_car_state(d, m)
             current_speed = np.sqrt(current_velocity[0] ** 2 + current_velocity[1] ** 2)
 
-            x = np.array([current_position[0], current_position[1], car_orient, current_speed, 0.0])
+            x = np.array([current_position[0], current_position[1], car_orient, current_speed])
+            config_.dt = delta_time
+            u, trajectory = dwa_control(x, config_, goal, obstacles)
 
-            u, predicted_trajectory = dwa_control(x, config, goal, obstacles_with_wall, delta_time)
+            # u, predicted_trajectory = dwa_control(x, config, goal, obstacles_with_wall, delta_time)
             # main(obstacles_with_wall,3,4, RobotType.rectangle)
             print("applied values : ", u[0], u[1])
+            print("trajectory : ", trajectory)
 
-            velocity.ctrl = u[0] # update velocity control value
-            steering.ctrl = u[1] # update steering control value
+            velocity.ctrl = 1 # update velocity control value
+            steering.ctrl = 1 # update steering control value
 
             # mj_step can be replaced with code that also evaluates
             # a policy and applies a control signal before stepping the physics.

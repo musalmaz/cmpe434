@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+import math
 
 # Parameters
 class DWAConfig:
@@ -8,28 +9,29 @@ class DWAConfig:
         # Robot (or car in this case) configuration
         self.max_speed = 3.0  # maximum speed [m/s]
         self.min_speed = -1.0  # minimum speed [m/s]
-        self.max_yawrate = 0.38  # maximum yaw rate [rad/s]
-        self.min_yawrate = -0.38  # minimum yaw rate [rad/s]
+        self.max_yawrate = 40.0 * math.pi / 180.0  # [rad/ss]
+        self.min_yawrate = -40.0 * math.pi / 180.0  # [rad/ss]
         self.max_accel = 0.2  # maximum acceleration [m/ss]
-        self.max_dyawrate = 0.1  # maximum change in yaw rate [rad/ss]
+        self.max_dyawrate = 0.2  # maximum change in yaw rate [rad/ss]
         self.v_resolution = 0.01  # velocity resolution [m/s]
-        self.yawrate_resolution = 0.01  # yaw rate resolution [rad/s]
+        self.yawrate_resolution = 0.1 * math.pi / 180.0  # [rad/s]
         self.dt = 0.1  # time tick [s]
         self.predict_time = 3.0  # predict time in the future [s]
-        self.to_goal_cost_gain = 0.15  # cost-to-goal weighting
+        self.to_goal_cost_gain = 20  # cost-to-goal weighting
         self.speed_cost_gain = 1.0  # speed cost weighting
-        self.obstacle_cost_gain = 1.0  # cost for obstacles
-        self.robot_radius = 0.5  # robot radius [m]
+        self.obstacle_cost_gain = 40.0  # cost for obstacles
+        self.robot_radius = 0.3  # robot radius [m]
         self.obstacle_proximity_threshold = 0.5 
-        self.heading_cost_gain = 1.0
+        self.heading_cost_gain = 4.0
 
 # Motion Model
 def motion_model(x, u, dt):
     # x = [x(m), y(m), theta(rad), v(m/s)]
-    theta = x[2] + u[1] * dt
-    x_new = x[3] * np.cos(theta) * dt
-    y_new = x[3] * np.sin(theta) * dt
-    return np.array([x[0] + x_new, x[1] + y_new, theta, u[0]])
+    theta = x[2] + u[1] * dt  # Update the heading based on yaw rate and time step
+    x_new = x[3] * np.cos(theta) * dt  # Calculate new x position
+    y_new = x[3] * np.sin(theta) * dt  # Calculate new y position
+    return np.array([x[0] + x_new, x[1] + y_new, theta, u[0]])  # Return the new state
+
 
 # Dynamic Window Approach
 def dwa_control(x, config, goal, ob):
@@ -130,7 +132,7 @@ def plot_robot_trajectory(trajectory, goal, obstacles, u):
 
 
 
-# Example usage
+# # Example usage
 # config = DWAConfig()
 # x = np.array([0, 0, 0, 0])  # Initial state [x(m), y(m), theta(rad), v(m/s)]
 # goal = np.array([1, 10])  # Goal position [x(m), y(m)]
@@ -152,20 +154,28 @@ def plot_robot_trajectory(trajectory, goal, obstacles, u):
 
 # Example usage
 config = DWAConfig()
-x = np.array([5, 2, 0, 0])  # Initial state [x(m), y(m), theta(rad), v(m/s)]
-goal = np.array([1, 10])  # Goal position [x(m), y(m)]
-obstacles = np.array([[1, 2], [3, 4], [5, 6]])  # Obstacles positions [[x(m), y(m)], ...]
+x = np.array([0, 0, 0, 0])  # Initial state [x(m), y(m), theta(rad), v(m/s)]
+goal = np.array([3, 4])  # Goal position [x(m), y(m)]
+obstacles = np.array([[1, 3],
+                      [-2, 3],
+                      [3, -3]])
+path_points = []
 def update(frame):
-    global x  # Use the global state variable
+    global x, path_points  # Use the global state and path variables
+
     u, trajectory = dwa_control(x, config, goal, obstacles)
-    print(u)
+    path_points.append(x[:2])  # Append current position to path
+    path = trajectory[:, :2]
     x = motion_model(x, u, config.dt)  # Update the robot's state
 
     # Clear the current plot
     ax.clear()
 
-    # Plot trajectory using only the first two columns for x and y positions
+    # Plot trajectory
     ax.plot(trajectory[:, 0], trajectory[:, 1], 'b-', label='Trajectory')
+
+    # Plot the accumulated path as a line
+    ax.scatter(path[:, 0], path[:, 1], color='black', s=50, label='Path')
 
     # Plot obstacles
     ax.scatter(obstacles[:, 0], obstacles[:, 1], color='red', s=50, label='Obstacles')
@@ -187,5 +197,5 @@ def update(frame):
     ax.set_ylim([np.min(obstacles[:,1]) - 1, np.max(obstacles[:,1]) + 1])
 
 fig, ax = plt.subplots()
-ani = FuncAnimation(fig, update, frames=np.arange(10000), repeat=False)
+ani = FuncAnimation(fig, update, frames=np.arange(1000), repeat=False)
 plt.show()

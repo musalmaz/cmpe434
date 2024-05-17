@@ -38,28 +38,28 @@ class Config:
 
     def __init__(self):
         # robot parameter
-        self.max_speed = 1.0  # [m/s]
-        self.min_speed = -0.5  # [m/s]
-        self.max_yaw_rate = 0.38  # [rad/s]40.0 * math.pi / 180.0 
+        self.max_speed = 6.0  # [m/s]
+        self.min_speed = 0.2  # [m/s]
+        self.max_yaw_rate = 3  # [rad/s]40.0 * math.pi / 180.0 
         self.max_accel = 0.2  # [m/ss]
         self.max_delta_yaw_rate = 40.0 * math.pi / 180.0  # [rad/ss]
         self.v_resolution = 0.01  # [m/s]
         self.yaw_rate_resolution = 0.1 * math.pi / 180.0  # [rad/s]
         self.dt = 0.1  # [s] Time tick for motion prediction
         self.predict_time = 3.0  # [s]
-        self.to_goal_cost_gain = 0.15
+        self.to_goal_cost_gain = 20
         self.speed_cost_gain = 1.0
         self.obstacle_cost_gain = 1.0
         self.robot_stuck_flag_cons = 0.001  # constant to prevent robot stucked
         self.robot_type = RobotType.rectangle
-
+        self.L = 0.4
         # if robot_type == RobotType.circle
         # Also used to check if goal is reached in both types
         self.robot_radius = 1.0  # [m] for collision check
 
         # if robot_type == RobotType.rectangle
-        self.robot_width = 0.5  # [m] for collision check
-        self.robot_length = 1.2  # [m] for collision check
+        self.robot_width = 0.3  # [m] for collision check
+        self.robot_length = 0.5 # [m] for collision check
         # obstacles [x(m) y(m), ....]
         # self.ob = np.array([[-1, -1],
         #                     [0, 2],
@@ -124,7 +124,7 @@ def calc_dynamic_window(x, config, delta_time):
     #  [v_min, v_max, yaw_rate_min, yaw_rate_max]
     dw = [max(Vs[0], Vd[0]), min(Vs[1], Vd[1]),
           max(Vs[2], Vd[2]), min(Vs[3], Vd[3])]
-
+    print("DW : ", dw)
     return dw
 
 
@@ -144,40 +144,77 @@ def predict_trajectory(x_init, v, y, config):
     return trajectory
 
 
-def calc_control_and_trajectory(x, dw, config, goal, ob):
-    """
-    calculation final input with dynamic window
-    """
+# def calc_control_and_trajectory(x, dw, config, goal, ob):
+#     """
+#     calculation final input with dynamic window
+#     """
 
+#     x_init = x[:]
+#     min_cost = float("inf")
+#     best_u = [0.0, 0.0]
+#     best_trajectory = np.array([x])
+
+#     # evaluate all trajectory with sampled input in dynamic window
+#     for v in np.arange(dw[0], dw[1], config.v_resolution):
+#         for y in np.arange(dw[2], dw[3], config.yaw_rate_resolution):
+
+#             trajectory = predict_trajectory(x_init, v, y, config)
+#             # calc cost
+#             to_goal_cost = config.to_goal_cost_gain * calc_to_goal_cost(trajectory, goal)
+#             speed_cost = config.speed_cost_gain * (config.max_speed - trajectory[-1, 3])
+#             ob_cost = 0
+#             if len(ob) > 0:
+#                 ob_cost = config.obstacle_cost_gain * calc_obstacle_cost(trajectory, ob, config)
+
+#             final_cost = to_goal_cost + speed_cost + ob_cost
+
+#             # search minimum trajectory
+#             if min_cost >= final_cost:
+#                 min_cost = final_cost
+#                 best_u = [v, y]
+#                 best_trajectory = trajectory
+#                 if abs(best_u[0]) < config.robot_stuck_flag_cons \
+#                         and abs(x[3]) < config.robot_stuck_flag_cons:
+#                     # to ensure the robot do not get stuck in
+#                     # best v=0 m/s (in front of an obstacle) and
+#                     # best omega=0 rad/s (heading to the goal with
+#                     # angle difference of 0)
+#                     best_u[1] = -config.max_delta_yaw_rate
+#     return best_u, best_trajectory
+
+def calc_control_and_trajectory(x, dw, config, goal, ob):
     x_init = x[:]
     min_cost = float("inf")
-    best_u = [0.0, 0.0]
+    best_u = [0.0, 0.0]  # This will be [throttle, steering_angle]
     best_trajectory = np.array([x])
 
-    # evaluate all trajectory with sampled input in dynamic window
     for v in np.arange(dw[0], dw[1], config.v_resolution):
         for y in np.arange(dw[2], dw[3], config.yaw_rate_resolution):
 
             trajectory = predict_trajectory(x_init, v, y, config)
-            # calc cost
             to_goal_cost = config.to_goal_cost_gain * calc_to_goal_cost(trajectory, goal)
             speed_cost = config.speed_cost_gain * (config.max_speed - trajectory[-1, 3])
-            ob_cost = config.obstacle_cost_gain * calc_obstacle_cost(trajectory, ob, config)
-
+            ob_cost = 0
+            if len(ob) > 0 :
+                ob_cost = config.obstacle_cost_gain * calc_obstacle_cost(trajectory, ob, config) if len(ob) > 0 else 0
             final_cost = to_goal_cost + speed_cost + ob_cost
 
-            # search minimum trajectory
             if min_cost >= final_cost:
                 min_cost = final_cost
-                best_u = [v, y]
+                best_u = [v, y]  # Note: These are velocity and yaw rate
                 best_trajectory = trajectory
-                if abs(best_u[0]) < config.robot_stuck_flag_cons \
-                        and abs(x[3]) < config.robot_stuck_flag_cons:
-                    # to ensure the robot do not get stuck in
-                    # best v=0 m/s (in front of an obstacle) and
-                    # best omega=0 rad/s (heading to the goal with
-                    # angle difference of 0)
-                    best_u[1] = -config.max_delta_yaw_rate
+
+                # Checking if the robot is near a stuck condition
+                if abs(v) < config.robot_stuck_flag_cons and abs(x[3]) < config.robot_stuck_flag_cons:
+                    y = -config.max_delta_yaw_rate  # Adjust yaw rate to prevent getting stuck
+
+    # Convert best_u to [throttle, steering_angle]
+    throttle = best_u[0] * 2 # Assuming direct mapping, may need scaling
+    if throttle != 0:
+        steering_angle = np.arctan((config.L * best_u[1]) / throttle)
+    else:
+        steering_angle = 0
+
     return best_u, best_trajectory
 
 
@@ -185,6 +222,7 @@ def calc_obstacle_cost(trajectory, ob, config):
     """
     calc obstacle cost inf: collision
     """
+    ob = np.array(ob)
     ox = ob[:, 0]
     oy = ob[:, 1]
     dx = trajectory[:, 0] - ox[:, None]
@@ -257,36 +295,66 @@ def plot_robot(x, y, yaw, config):  # pragma: no cover
         plt.plot([x, out_x], [y, out_y], "-k")
 
 
-def main(ob,gx=10.0, gy=10.0, robot_type=RobotType.rectangle):
+# def main(x, delta_time, ob,goal, robot_type=RobotType.rectangle):
+#     print(__file__ + " start!!")
+
+#     ob = np.array(ob)
+#     # input [forward speed, yaw_rate]
+
+#     config.robot_type = robot_type
+#     trajectory = np.array(x)
+
+#     while True:
+#         print(" sadsa")
+#         u, predicted_trajectory = dwa_control(x, config, goal, ob, delta_time)
+#         x = motion(x, u, config.dt)  # simulate robot
+#         trajectory = np.vstack((trajectory, x))  # store state history
+
+#         if show_animation:
+#             print("show")
+#             plt.cla()
+#             # for stopping simulation with the esc key.
+#             plt.gcf().canvas.mpl_connect(
+#                 'key_release_event',
+#                 lambda event: [exit(0) if event.key == 'escape' else None])
+#             plt.plot(predicted_trajectory[:, 0], predicted_trajectory[:, 1], "-g")
+#             plt.plot(x[0], x[1], "xr")
+#             plt.plot(goal[0], goal[1], "xb")
+#             plt.plot(ob[:, 0], ob[:, 1], "ok")
+#             plot_robot(x[0], x[1], x[2], config)
+#             plot_arrow(x[0], x[1], x[2])
+#             plt.axis("equal")
+#             plt.grid(True)
+#             plt.pause(0.0001)
+
+#         # check reaching goal
+#         dist_to_goal = math.hypot(x[0] - goal[0], x[1] - goal[1])
+#         if dist_to_goal <= config.robot_radius:
+#             print("Goal!!")
+#             break
+
+#     print("Done")
+#     if show_animation:
+#         plt.plot(trajectory[:, 0], trajectory[:, 1], "-r")
+#         plt.pause(0.0001)
+#         plt.show()
+
+def main(x, delta_time, ob,goal, robot_type=RobotType.rectangle):
     print(__file__ + " start!!")
     # initial state [x(m), y(m), yaw(rad), v(m/s), omega(rad/s)]
-    x = np.array([0.0, 0.0, math.pi / 8.0, 0.0, 0.0])
+    # x = np.array([0.0, 0.0, math.pi / 8.0, 0.0, 0.0])
     # goal position [x(m), y(m)]
-    goal = np.array([gx, gy])
+    # goal = np.array([gx, gy])
 
     # input [forward speed, yaw_rate]
 
     config.robot_type = robot_type
     trajectory = np.array(x)
-    # ob = np.array([[-1, -1],
-    #                         [0, 2],
-    #                         [4.0, 2.0],
-    #                         [5.0, 4.0],
-    #                         [5.0, 5.0],
-    #                         [5.0, 6.0],
-    #                         [5.0, 9.0],
-    #                         [8.0, 9.0],
-    #                         [7.0, 9.0],
-    #                         [8.0, 10.0],
-    #                         [9.0, 11.0],
-    #                         [12.0, 13.0],
-    #                         [12.0, 12.0],
-    #                         [15.0, 15.0],
-    #                         [13.0, 13.0]
-    #                         ])
+    # ob = config.ob
+    ob = np.array(ob)
     while True:
-        u, predicted_trajectory = dwa_control(x, config, goal, ob)
-        x = motion(x, u, config.dt)  # simulate robot
+        u, predicted_trajectory = dwa_control(x, config, goal, ob, delta_time)
+        x = motion(x, u, delta_time)  # simulate robot
         trajectory = np.vstack((trajectory, x))  # store state history
 
         if show_animation:

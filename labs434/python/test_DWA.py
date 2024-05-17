@@ -7,6 +7,7 @@ import mujoco.viewer
 import matplotlib.pyplot as plt
 import cmpe434_utils
 from dynamic_window_approach import *
+from controller_DWA import *
 
 def get_angle(p1, p2):
     return (np.arctan2(p2[1] - p1[1], p2[0] - p1[0]) + 2*np.pi) % (2*np.pi)
@@ -44,7 +45,7 @@ m = mujoco.MjModel.from_xml_string(scene.to_xml_string(), assets=all_assets)
 d = mujoco.MjData(m)
 
 
-m.opt.timestep = 0.1
+# m.opt.timestep = 0.1
 
 box_size = (0.1, 0.1, 0.1)
 obstacle_rgba = (0.8, 0.3, 0.3, 1.0)
@@ -95,6 +96,7 @@ wall = np.array([
     [-4, -5]
 ])
 
+config_= DWAConfig()
 wall_radius = 0.4
 wall_height = 1
 obstacle_radius = 0.3
@@ -157,7 +159,7 @@ with mujoco.viewer.launch_passive(m, d, key_callback=key_callback) as viewer:
             x = np.array([current_position[0], current_position[1], car_orient, current_speed, 0.0])
             goal = np.array([3, 4])
 
-            u, predicted_trajectory = dwa_control(x, config, goal, obstacles_with_wall)
+            u, predicted_trajectory = dwa_control(x, config_, goal, obstacles_with_wall)
 
             print("applied values : ", u[0], u[1])
             main(obstacles_with_wall,3,4, RobotType.rectangle)

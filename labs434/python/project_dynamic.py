@@ -1,22 +1,19 @@
 import time
 import random
+import numpy as np
+import scipy as sp
 
 import mujoco
 import mujoco.viewer
+import matplotlib.pyplot as plt
 
 import cmpe434_utils
 import cmpe434_dungeon
 
-import numpy as np
-
-
-from PIDController import *
-# from controller_DWA import *
 import a_star
-from dynamic_window_approach import *
-# from vhf import *
-from rrt import *
+
 from PIDController import *
+from potential_field import *
 
 kp_steering = 5
 ki_steering = 0
@@ -25,43 +22,39 @@ kd_steering = -0.1
 ####################### Hız 1 iken 5 0 -0.1 iyi
 pid_steering = PIDController()
 
-def get_angle(p1, p2):
-    return (np.arctan2(p2[1] - p1[1], p2[0] - p1[0]) + 2*np.pi) % (2*np.pi)
-
-def distance(p1, p2): 
-    return np.sqrt(np.sum(np.square(p1 - p2)))
-
-def interpolate_points(p1, p2, num_points):
-    """ Interpolates num_points between two given points p1 and p2. """
-    # Include the start point and exclude the end point since it will be included by the next segment
-    return [(p1[0] + (p2[0] - p1[0]) * i / (num_points + 1), p1[1] + (p2[1] - p1[1]) * i / (num_points + 1)) 
-            for i in range(1, num_points + 1)]
-
-def unit_vector(vector):
-    """Ensure the vector is a unit vector and 3D."""
-    if len(vector) == 2:
-        vector = np.append(vector, 0)
-    return vector / np.linalg.norm(vector)
-
-def angle_between(v1, v2):
-    """Calculate the angle in radians between 3D vectors 'v1' and 'v2'."""
-    if len(v1) == 2:
-        v1 = np.append(v1, 0)
-    if len(v2) == 2:
-        v2 = np.append(v2, 0)
-    
-    v1_u = unit_vector(v1)
-    v2_u = unit_vector(v2)
-    return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
-
 def normalize_steering(steering):
-    max_steering = 3
+    max_steering = 3.0
     if steering > max_steering:
         steering =  max_steering
     if steering < -max_steering:
         steering = -max_steering
     return steering
+
+def get_car_state(data):
+    # car_pos = data.qpos.copy()[:2]
+    car_pos = data.body("buddy").xpos[:2]
+    car_vel = data.qvel.copy()[:2]
+    car_orient = get_angle([0, 0], car_vel[:2])
+    car_speed = np.sqrt(car_vel[0]**2 + car_vel[1]**2)
+
+    return car_pos, car_orient, car_speed
+
+
+def adjust_heading_to_waypoint(car_pos, car_orient, waypoint):
+    # Calculate the vector to the waypoint
+    direction_vector = waypoint - car_pos
+    # Calculate the desired heading (angle with respect to the x-axis)
+    desired_heading = np.arctan2(direction_vector[1], direction_vector[0])
     
+    # Assume car_orient is in radians and aligned with the x-axis (0 radians)
+    # Calculate the necessary rotation
+    rotation_needed = desired_heading - car_orient
+    
+    # Normalize the angle to be within -pi to pi for consistent behavior
+    rotation_needed = (rotation_needed + np.pi) % (2 * np.pi) - np.pi
+    
+    return rotation_needed
+
 def obstacles_within_radius(obstacles, current_position, radius):
     """
     Finds the obstacles that are within a given radius around the current position.
@@ -82,15 +75,12 @@ def obstacles_within_radius(obstacles, current_position, radius):
 
     return obstacles_in_radius
 
+def interpolate_points(p1, p2, num_points):
+    """ Interpolates num_points between two given points p1 and p2. """
+    # Include the start point and exclude the end point since it will be included by the next segment
+    return [(p1[0] + (p2[0] - p1[0]) * i / (num_points + 1), p1[1] + (p2[1] - p1[1]) * i / (num_points + 1)) 
+            for i in range(1, num_points + 1)]
 
-def get_car_state(data):
-    # car_pos = data.qpos.copy()[:2]
-    car_pos = data.body("buddy").xpos[:2]
-    car_vel = data.qvel.copy()[:2]
-    car_orient = get_angle([0, 0], car_vel[:2])
-    car_speed = np.sqrt(car_vel[0]**2 + car_vel[1]**2)
-
-    return car_pos, car_orient, car_speed
 
 # Pressing SPACE key toggles the paused state. 
 # You can define other keys for other actions here.
@@ -100,14 +90,9 @@ def key_callback(keycode):
         paused = not paused
 
 paused = False # Global variable to control the pause state.
-obstacles = [] # store all obstacles
+walls = [] # store all obstacles
 start_pose = []
 end_pose = []
-
-pid_controller = PIDController()
-# dwa_config = DWAConfig()
-config = Config()
-config.robot_type = RobotType.rectangle
 
 def create_scenario():
 
@@ -120,21 +105,14 @@ def create_scenario():
     for index, r in enumerate(rooms):
         (xmin, ymin, xmax, ymax) = cmpe434_dungeon.find_room_corners(r)
         scene.worldbody.add('geom', name='R{}'.format(index), type='plane', size=[(xmax-xmin)+1, (ymax-ymin)+1, 0.1], rgba=[0.8, 0.6, 0.4, 1],  pos=[(xmin+xmax), (ymin+ymax), 0])
-        # print("Size R : ", [(xmax-xmin)+1, (ymax-ymin)+1, 0.1], [(xmin+xmax), (ymin+ymax), 0])
-        # obstacles.append([2*((xmax-xmin)+1), 2*((ymax-ymin)+1)])
-        # obstacles.append([2*(xmin+xmax), 2*(ymax-ymin)])
-        # obstacles.append([2*(xmin+xmax), 2*(ymin+ymax)])
-        # obstacles.append([2*(xmax-xmin), 2*(ymin+ymax)])
-        # obstacles.append([2*(xmin+xmax), 2*(ymin+ymax)])
 
     for pos, tile in tiles.items():
         if tile == "#":
             scene.worldbody.add('geom', type='box', size=[1, 1, 0.1], rgba=[0.8, 0.6, 0.4, 1],  pos=[pos[0]*2, pos[1]*2, 0])
-            # print("### : ", [pos[0]*2, pos[1]*2, 0])
-            obstacles.append([pos[0]*2 + 0.5, pos[1]*2 + 0.5])
-            obstacles.append([pos[0]*2 + 0.5, pos[1]*2 -0.5])
-            obstacles.append([pos[0]*2 - 0.5, pos[1]*2 + 0.5])
-            obstacles.append([pos[0]*2 -0.5, pos[1]*2 -0.5])
+            walls.append([pos[0]*2 + 0.5, pos[1]*2 + 0.5])
+            walls.append([pos[0]*2 + 0.5, pos[1]*2 -0.5])
+            walls.append([pos[0]*2 - 0.5, pos[1]*2 + 0.5])
+            walls.append([pos[0]*2 -0.5, pos[1]*2 -0.5])
 
     # scene.worldbody.add('geom', type='plane', size=[(xmax-xmin)/2+0.1, (ymax-ymin)/2+0.1, 0.01], rgba=[0.8, 0.6, 0.4, 1],  pos=[(xmin+xmax)/2, (ymin+ymax)/2, 0])
 
@@ -146,15 +124,18 @@ def create_scenario():
     # Add the robot to the scene.
     robot, robot_assets = cmpe434_utils.get_model('models/mushr_car/model.xml')
     start_pos = random.choice([key for key in tiles.keys() if tiles[key] == "."])
-    final_pos = random.choice([key for key in tiles.keys() if tiles[key] == "."])
-    
+    final_pos = random.choice([key for key in tiles.keys() if tiles[key] == "." and key != start_pos])
+
     start_pose.append([2*start_pos[0], 2*start_pos[1]])
     end_pose.append([2*final_pos[0], 2*final_pos[1]])
 
-    # print("start end pos : ", start_pos, final_pos)
-
     scene.worldbody.add('site', name='start', type='box', size=[0.5, 0.5, 0.01], rgba=[0, 0, 1, 1],  pos=[start_pos[0]*2, start_pos[1]*2, 0])
     scene.worldbody.add('site', name='finish', type='box', size=[0.5, 0.5, 0.01], rgba=[1, 0, 0, 1],  pos=[final_pos[0]*2, final_pos[1]*2, 0])
+
+    # create obstables for each room
+    for i, room in enumerate(rooms):
+        obs_pos = random.choice([tile for tile in room if tile != start_pos and tile != final_pos])
+        scene.worldbody.add('geom', name='Z{}'.format(i), type='cylinder', size=[0.2, 0.05], rgba=[0.8, 0.0, 0.1, 1],  pos=[obs_pos[0]*2, obs_pos[1]*2, 0.08])
 
     start_yaw = random.randint(0, 359)
     robot.find("body", "buddy").set_attributes(pos=[start_pos[0]*2, start_pos[1]*2, 0.1], euler=[0, 0, start_yaw])
@@ -171,10 +152,13 @@ def execute_scenario(scene, ASSETS=dict()):
     m = mujoco.MjModel.from_xml_string(scene.to_xml_string(), assets=all_assets)
     d = mujoco.MjData(m)
 
-    # m.opt.timestep = 0.1
+    rooms = [m.geom(i).id for i in range(m.ngeom) if m.geom(i).name.startswith("R")]
+    obstacles = [m.geom(i).id for i in range(m.ngeom) if m.geom(i).name.startswith("Z")]
 
-    # print(obstacles)
-    # print(start_pose, end_pose)
+    uniform_direction_dist = sp.stats.uniform_direction(2)
+    obstacle_direction = [[x, y, 0] for x,y in uniform_direction_dist.rvs(len(obstacles))]
+
+    unused = np.zeros(1, dtype=np.int32)
 
     with mujoco.viewer.launch_passive(m, d, key_callback=key_callback) as viewer:
 
@@ -184,13 +168,9 @@ def execute_scenario(scene, ASSETS=dict()):
         velocity = d.actuator("throttle_velocity")
         steering = d.actuator("steering")
 
-        for i in range(100):
-            mujoco.mj_step(m, d)
-            viewer.sync()
-
         x_pos =  []
         y_pos = []
-        for i in obstacles:
+        for i in walls:
             x_pos.append(i[0])
             y_pos.append(i[1])
         planner = a_star.AStarPlanner(x_pos, y_pos, 1, 1)
@@ -234,18 +214,14 @@ def execute_scenario(scene, ASSETS=dict()):
                     viewer.user_scn.geoms[j],
                     type=mujoco.mjtGeom.mjGEOM_BOX,
                     size=[0.1, 0.1, 0],  # Adjusted size
-                    pos=[p[0], p[1], 0.05],  # Adjust z position if needed
+                    pos=[p[0], p[1], 0.00001],  # Adjust z position if needed
                     mat=np.eye(3).flatten(),
                     rgba=(0.8, 0.3, 0.3, 1.0)
                 )
         viewer.user_scn.ngeom = len(new_path)
         viewer.sync()
 
-        # Close the viewer automatically after 30 wall-seconds.
-        start = time.time()
-        # start_wait = True
-        path_index = 1
-        waypoint_acceptance_radius = 0.2
+
         car_x_pose = []
         car_y_pose = []
         sphere_geom_ids = 0
@@ -253,99 +229,116 @@ def execute_scenario(scene, ASSETS=dict()):
         car_pos, car_orient, car_speed = get_car_state(d)
         car_x_pose.append(car_pos[0])
         car_y_pose.append(car_pos[1])
-        x = np.array([car_pos[0], car_pos[1], car_orient, car_speed, 1])
 
+        print(start_pose, end_pose)
+
+        # Close the viewer automatically after 30 wall-seconds.
+        start = time.time()
+        heading_corrected = False
         prev_applied_steering = 0
-        max_yaw_rate = 0.3
-
+        # max_yaw_rate = 0.8
         while viewer.is_running() and time.time() - start < 300:
-            # if start_wait :
-            #     time.sleep(30)
-            #     start_wait = False
             step_start = time.time()
 
             if not paused:
-
                 car_pos, car_orient, car_speed = get_car_state(d)
-                car_x_pose.append(car_pos[0])
-                car_y_pose.append(car_pos[1])
-                # print("Cars states : ", car_pos, car_speed)
+                # if not heading_corrected: 
+                #     rotation_needed = adjust_heading_to_waypoint(car_pos, car_orient, path[1])
+                #     # Check if the rotation needed is greater than the acceptable threshold
+                #     while abs(rotation_needed) > np.pi / 20:  
+                #         # Set controls
+                #         velocity.ctrl = 0.2  # Constant velocity
+                #         steering.ctrl = rotation_needed  # Set steering control value
+                        
+                #         # Update simulation to apply the steering
+                #         mujoco.mj_step(m, d)  # Assuming this steps the physics engine
+                        
+                #         # Update the car state to get the new orientation
+                #         car_pos, car_orient, car_speed = get_car_state(d)
+                        
+                #         # Recalculate the rotation needed after the update
+                #         rotation_needed = adjust_heading_to_waypoint(car_pos, car_orient, path[1])
+                        
+                #     heading_corrected = True
 
-                # mujoco.mjv_initGeom(
-                #     viewer.user_scn.geoms[sphere_geom_ids],
-                #     type=mujoco.mjtGeom.mjGEOM_SPHERE,  # Replace with GEOM_BOX if needed
-                #     size=(0.05, 0.05, 0.05),
-                #     pos=[car_pos[0], car_pos[1], 0],  # Initial position (updated later)
-                #     mat=np.eye(3).flatten(),
-                #     rgba=(0, 0.5, 0.5, 1)
-                # )
-                # sphere_geom_ids += 1
-                # viewer.user_scn.ngeom = len(new_path) + sphere_geom_ids
-                
+
+                dynamic_obstacles = []
+                # velocity.ctrl = 4.0 # update velocity control value
+                # steering.ctrl = 20.0 # update steering control value
+
+                # obstable update
+                for i, x in enumerate(obstacles):
+                    dx = obstacle_direction[i][0]
+                    dy = obstacle_direction[i][1]
+
+                    px = m.geom_pos[x][0]
+                    py = m.geom_pos[x][1]
+                    pz = 0.02
+
+                    nearest_dist = mujoco.mj_ray(m, d, [px, py, pz], obstacle_direction[i], None, 1, -1, unused)
+
+                    if nearest_dist >= 0 and nearest_dist < 0.4:
+                        obstacle_direction[i][0] = -dy
+                        obstacle_direction[i][1] = dx
+
+                    m.geom_pos[x][0] = m.geom_pos[x][0]+dx*0.001
+                    m.geom_pos[x][1] = m.geom_pos[x][1]+dy*0.001
+                    dynamic_obstacles.append([m.geom_pos[x][0], m.geom_pos[x][1]])
+
+                ###############
                 curr_time = time.time()
                
                 end = time.time()
                 delta_t = curr_time -prev_time
                 prev_time = curr_time
+
+                possible_obstacles = dynamic_obstacles + walls
+
+                ####### INNER LOOP
+                goal_pos_loop = path[pid_steering.current_index]
+                obstacle_near = obstacles_within_radius(possible_obstacles, car_pos, 2)
+                dynamic_obstacle_near = obstacles_within_radius(dynamic_obstacles, car_pos, 1)
+                if obstacle_near and dynamic_obstacle_near and pid_steering.current_index > 1:
+                    while True:
+                        dynamic_obstacle_near = obstacles_within_radius(dynamic_obstacles, car_pos, 1)
+                        car_pos, car_orient, car_speed = get_car_state(d)
+                        if not paused:
+                            steering_angle = potential_field_steering(obstacle_near, car_pos, car_orient, goal_pos_loop)
+                            steering_angle = np.radians(steering_angle)
+                            # steering_angle = steering_angle % np.pi
+                            steering_angle = normalize_steering(steering_angle)
+                            print("Current, goal : ", car_pos, goal_pos_loop)
+                            velocity.ctrl = 1.0 # update velocity control value
+                            steering.ctrl = steering_angle # update steering control value
+                            mujoco.mj_step(m, d)
+
+                            # Pick up changes to the physics state, apply perturbations, update options from GUI.
+                            viewer.sync()
+                        if distance(car_pos, goal_pos_loop) < 1:
+                            print("INNER LOOP COMPLETED............. ")
+                            break
+                        if not dynamic_obstacle_near :
+                            break
+                            
                 
-                obstacle_near = obstacles_within_radius(obstacles, car_pos, 3)  
-                # start_node = Node(car_pos[0], car_pos[1], car_orient)
-                # goal_node = Node(path[path_index][0], path[path_index][1], 0)
-                # print("GOAL NODE : ", path[path_index][0], path[path_index][1])
-                # obstacle_with_size = []
-                # for i in obstacle_near:
-                #     obstacle_with_size.append((i[0], i[1], 0.5))
-
-                # result = RRT(start_node, goal_node, obstacle_with_size)
-                # if result is not None:
-                #     path_x, path_y = result
-                #     path_gen = []
-                #     for i in range(len(path_x)):
-                #         path_gen.append([path_x[i], path_y[i]])
-                #     print("GEN PATH : ", path_gen)  
-
                 pid_steering.dt = delta_t
                 pid_steering.current_orientation = car_orient
-                applied_orient = pid_steering.update(car_pos, path)
-                applied_steering = normalize_steering(applied_orient)
-                if prev_applied_steering != 0 and abs(applied_steering - prev_applied_steering) > max_yaw_rate :
-                    applied_steering = prev_applied_steering
+                applied_steering = pid_steering.update(car_pos, path)
+                applied_steering = normalize_steering(applied_steering)
+                # applied_steering = applied_steering % np.pi
                 print(applied_steering)
-                
-                # plot_path(start_node, goal_node, path_gen, nodes, obstacle_with_size)
+                # if prev_applied_steering != 0 and abs(applied_steering - prev_applied_steering) > max_yaw_rate :
+                #     applied_steering = prev_applied_steering
 
-
-                # x[0] = car_pos[0]
-                # x[1] = car_pos[1]
-                
-                # u, predicted_trajectory = dwa_control(x, config, path[path_index], obstacle_near, curr_time -prev_time)
-                # x = motion(x, u, config.dt)
-                # path_small = predicted_trajectory[:, :2]
-                # print(path_small)
-                # print("goal",path[path_index], "current loc: ", car_pos)
-                # print(u)
-                # print()
-                # print("samll path : ", path_small[:5])
-                # theta = x[2] + u[1] * delta_t  # Update the heading based on yaw rate and time step
-                # main(x, end - step_start, obstacle_near,path[path_index], robot_type=RobotType.rectangle)
-                # applied_steering = normalize_steering(-steering_angle)
-                # applied_throttle = normalize_steering(throttle)
-                # applied_vel = normalize_steering(u[0])
-                # print(car_orient, theta, u[1] * delta_t)
-                # if distance(car_pos, path[path_index]) < waypoint_acceptance_radius:
-                #     print("WP REACHED............. ")
-                #     path_index += 1
-                
-               
-                velocity.ctrl = 1 # update velocity control value
-                steering.ctrl = applied_orient # update steering control value
                 # mj_step can be replaced with code that also evaluates
                 # a policy and applies a control signal before stepping the physics.
+                velocity.ctrl = 1.0 # update velocity control value
+                steering.ctrl = applied_steering # update steering control value
                 mujoco.mj_step(m, d)
 
                 # Pick up changes to the physics state, apply perturbations, update options from GUI.
                 viewer.sync()
-                prev_applied_steering = applied_steering
+                ###########################
                 if(pid_steering.is_waypoint_reached(car_pos, path)):
                     print("WAYPOINT REACHED")
                     pid_steering.current_index += 1
@@ -354,26 +347,15 @@ def execute_scenario(scene, ASSETS=dict()):
                     break
                 if(pid_steering.current_index == len(path) - 1):
                     pid_steering.acceptance_radius = 0.1
-                # viewer.render()  # Make sure to render updates
+
             # Rudimentary time keeping, will drift relative to wall clock.
             time_until_next_step = m.opt.timestep - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
-
-        plt.plot(car_x_pose, car_y_pose, "-p")
-        plt.plot(rx, ry, "-r")
-        plt.plot(x_pos, y_pos, ".k")
-        plt.plot(start_pose[0][0], start_pose[0][1], "og")
-        plt.plot(end_pose[0][0], end_pose[0][1], "xb")
-        plt.grid(True)
-        plt.axis("equal")
-        plt.pause(0.001)
-        plt.show()
     
     return m, d
 
 if __name__ == '__main__':
     scene, all_assets = create_scenario()
     execute_scenario(scene, all_assets)
-    
 
